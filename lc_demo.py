@@ -26,6 +26,7 @@ llm = ChatOpenAI(
     # DeepSeek V4 默认开 thinking，而 thinking 模式拒绝强制 tool_choice。
     # 解析任务不需要推理，直接关掉：省 token、也让 function_calling 能用。
     extra_body={"thinking": {"type": "disabled"}},
+    
 )
 
 JD = """招聘：后端工程师（LLM 应用方向）

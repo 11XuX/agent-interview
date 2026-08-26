@@ -88,12 +88,39 @@ thinking 模式支持工具调用，不支持强制工具调用。强制 `tool_c
 三种解法：
 
 - `extra_body={"thinking": {"type": "disabled"}}` —— 关闭 thinking，保留结构化输出的确定性
-- `disabled_params={"tool_choice": None}` —— 保留 thinking 并退回 auto，模型可能返回文本而不调用工具，需配合 `with_retry` 或 `include_raw=True` 判空
+- `disabled_params={"tool_choice": None}` —— 保留 thinking，不下发 tool_choice，模型可能返回文本而不调用工具，需配合 `with_retry` 或 `include_raw=True` 判空
 - `method="json_mode"` —— 不经过 tools 通道
 
 选择依据为该步骤是否需要推理。抽取、分类、格式转换类任务关闭 thinking。
 
-- **`extra_body` 的作用** —— 透传 OpenAI SDK 不识别、目标厂商识别的参数。厂商差异应收敛在此单点。
+### tool_choice 的设置位置
+
+| 层 | 设置方式 |
+|---|---|
+| 原生 OpenAI SDK | `client.chat.completions.create(..., tool_choice="auto")` |
+| LangChain 手动绑定工具 | `llm.bind_tools(tools, tool_choice="auto")`，显式参数 |
+| `with_structured_output` | 无参数可传，内部写死为指定函数名。只能在 `ChatOpenAI` 构造函数上设 `disabled_params` |
+
+`with_structured_output` 内部实际下发的参数集合：
+
+```python
+bind_kwargs = self._filter_disabled_params(
+    **{"tool_choice": tool_name, "parallel_tool_calls": False, "strict": strict, ...}
+)
+```
+
+- **`disabled_params` 的语义是不发送该参数，不是替换其值** —— `_filter_disabled_params` 命中时执行 `continue`，该 key 不进入请求体，服务端按自身默认值处理。`tool_choice` 的服务端默认值即为 `auto`。
+- **值的两种形态** —— `{"param": None}` 表示该参数永不发送；`{"param": ["val1", "val2"]}` 表示仅在值命中列表时不发送。
+- **作用域为整个实例** —— `disabled_params` 是构造参数，影响该实例上的所有调用。需要保留其他链的强制 tool_choice 时，单独构造一个实例。
+- **实测结论** —— thinking 开启配合 `disabled_params={"tool_choice": None}`，`with_structured_output` 可正常返回 Pydantic 对象。
+
+### 两个逃生舱
+
+- **`extra_body`** —— 增加 OpenAI SDK 不识别、目标厂商识别的参数。
+- **`disabled_params`** —— 移除 LangChain 自动下发、目标厂商不接受的参数。除 `tool_choice` 外，`parallel_tool_calls` 是另一个常见对象，LangChain 的字段注释即以其为例。
+
+厂商差异应收敛在这两处。
+
 - **可移植的配置边界** —— 仅依赖 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`MODEL` 三个环境变量，Python 依赖仅 `langchain-openai`。
 
 ## 七、LCEL 的能力边界
