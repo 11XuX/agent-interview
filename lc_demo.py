@@ -1,12 +1,18 @@
-"""LangChain demo: JD x 简历 面试助手。Step 5 - batch 批量评估 + RunnableConfig。"""
+"""LangChain demo: JD x 简历 面试助手。Step 6 - RunnableBranch 条件路由。"""
 import os
 import time
 from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnableParallel
+from langchain_core.runnables import (
+    RunnableBranch,
+    RunnableLambda,
+    RunnableParallel,
+    RunnablePassthrough,
+)
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
@@ -117,22 +123,57 @@ chain = parse | match_chain
 # .with_retry() 是 Runnable 基类白送的：包一层，整条链的任意一步抛错都会重试。
 robust = chain.with_retry(stop_after_attempt=3)
 
+
+# ---- 按 verdict 分流到三种后续动作 ----
+
+def as_text(r: MatchReport) -> dict:
+    """MatchReport 对象 -> prompt 变量。又一次跨模型边界的序列化。"""
+    return {"report": r.model_dump_json(indent=2)}
+
+
+followup_chain = RunnableLambda(as_text) | ChatPromptTemplate.from_messages([
+    ("system", "你是面试官。针对评估里的存疑项，出 3 个能问出真实水平的追问，每行一个，不要编号以外的废话。"),
+    ("human", "{report}"),
+]) | llm | StrOutputParser()
+
+pool_chain = RunnableLambda(as_text) | ChatPromptTemplate.from_messages([
+    ("system", "你是招聘协调。用一句话写人才库备注：这人现在为什么不推，什么条件下值得回捞。"),
+    ("human", "{report}"),
+]) | llm | StrOutputParser()
+
+# 第三条分支不调模型 —— 分支可以是任意 Runnable，包括一个纯函数
+reject = RunnableLambda(
+    lambda r: f"不匹配（{r.score} 分）：缺失 "
+              f"{sum(g.status == '缺失' for g in r.gaps)} 项硬性要求，不进入面试流程。"
+)
+
+# RunnableBranch：(判断函数, 分支) 依次匹配，最后一个是兜底默认分支
+route = RunnableBranch(
+    (lambda r: r.verdict == "建议面试", followup_chain),
+    (lambda r: r.verdict == "备选", pool_chain),
+    reject,
+)
+
+# 用 RunnableParallel 把报告和动作一起带出去，否则 report 就被 route 吃掉了
+full = robust | RunnableParallel(report=RunnablePassthrough(), action=route)
+
 if __name__ == "__main__":
     payloads = [{"jd": JD, "resume": r} for r in RESUMES.values()]
 
     t = time.perf_counter()
-    # max_concurrency 限制同时在飞的请求数，防止打爆厂商的 rate limit
-    reports = robust.batch(payloads, config={"max_concurrency": 2})
+    results = full.batch(payloads, config={"max_concurrency": 2})
     print(f"{len(payloads)} 份简历耗时 {time.perf_counter() - t:.1f}s\n")
 
-    for who, r in zip(RESUMES, reports):
-        miss = [g.requirement for g in r.gaps if g.status == "缺失"]
+    for who, res in zip(RESUMES, results):
+        r = res["report"]
         print(f"[{who}] {r.score:3d} 分 / {r.verdict}")
-        print(f"      缺失 {len(miss)} 项: {'、'.join(miss) or '无'}")
-        print(f"      风险 {len(r.risks)} 条，首条: {r.risks[0] if r.risks else '无'}\n")
+        for line in res["action"].strip().splitlines():
+            print(f"      {line}")
+        print()
 
-    assert len(reports) == len(payloads), "batch 必须一进一出"
-    # batch 是并发跑的，但结果按输入顺序返回 —— 这是接口保证，不是巧合
-    a, b, c = reports
-    assert a.score > c.score, f"强匹配({a.score})该高于弱匹配({c.score})"
-    assert a.score > b.score, f"强匹配({a.score})该高于有 gap 的({b.score})"
+    # 只断言编排逻辑，不断言模型的判断 —— 模型给几分是它的事，路由对不对是我的事
+    for res in results:
+        went_to_reject = res["action"].startswith("不匹配（")
+        assert went_to_reject == (res["report"].verdict == "不匹配"), (
+            f"路由错了：verdict={res['report'].verdict} 却 {'走了' if went_to_reject else '没走'}兜底分支"
+        )
