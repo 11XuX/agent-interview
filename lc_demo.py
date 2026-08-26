@@ -1,6 +1,7 @@
-"""LangChain demo: JD x 简历 面试助手。Step 3 - RunnableParallel 并发解析。"""
+"""LangChain demo: JD x 简历 面试助手。Step 4 - 融合：把两个对象喂给匹配链。"""
 import os
 import time
+from typing import Literal
 
 from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
@@ -76,22 +77,58 @@ resume_chain = resume_prompt | llm.with_structured_output(Profile, method="funct
 # RunnableParallel：同一份输入 dict 广播给每个分支，各分支并发跑，输出合并成 dict
 parse = RunnableParallel(jd=jd_chain, profile=resume_chain)
 
+
+class Gap(BaseModel):
+    """JD 里某一条要求，在候选人身上的落实情况。"""
+
+    requirement: str = Field(description="JD 里的这条要求，原样抄")
+    status: Literal["满足", "存疑", "缺失"] = Field(
+        description="满足=简历有直接证据；存疑=有相邻经验但没直接证据；缺失=完全没提"
+    )
+    evidence: str = Field(description="判断依据，一句话。满足/存疑要指出简历中的哪一条")
+
+
+class MatchReport(BaseModel):
+    """候选人与岗位的匹配评估。"""
+
+    score: int = Field(ge=0, le=100, description="综合匹配分，硬性要求权重远高于加分项")
+    verdict: Literal["建议面试", "备选", "不匹配"] = Field(description="结论")
+    gaps: list[Gap] = Field(description="逐条评估 JD 的每一条硬性要求，一条都不许漏")
+    risks: list[str] = Field(description="值得在面试中当面确认的风险点，没有就给空列表")
+
+
+match_prompt = ChatPromptTemplate.from_messages([
+    ("system", "你是资深技术面试官。只依据简历给出的事实判断，宁可标存疑也不要脑补。"),
+    ("human", "岗位要求：\n{jd}\n\n候选人画像：\n{profile}\n\n请逐条评估。"),
+])
+
+# LLM 只吃文本，所以上一步的对象要重新序列化回字符串。
+# dict 里的裸函数会被自动包成 RunnableLambda，等价于一个 RunnableParallel。
+match_chain = (
+    {
+        "jd": lambda d: d["jd"].model_dump_json(indent=2),
+        "profile": lambda d: d["profile"].model_dump_json(indent=2),
+    }
+    | match_prompt
+    | llm.with_structured_output(MatchReport, method="function_calling")
+)
+
+# 整条链：并行解析 -> 融合打分。RunnableSequence 里嵌着 RunnableParallel。
+chain = parse | match_chain
+
 if __name__ == "__main__":
-    payload = {"jd": JD, "resume": RESUME}
-
     t = time.perf_counter()
-    out = parse.invoke(payload)
-    parallel_s = time.perf_counter() - t
+    report = chain.invoke({"jd": JD, "resume": RESUME})
+    print(f"耗时 {time.perf_counter() - t:.1f}s\n")
 
-    t = time.perf_counter()
-    jd_chain.invoke(payload)
-    resume_chain.invoke(payload)
-    serial_s = time.perf_counter() - t
+    print(f"{report.score} 分 / {report.verdict}")
+    for g in report.gaps:
+        print(f"  [{g.status}] {g.requirement} —— {g.evidence}")
+    print("风险点:")
+    for r in report.risks:
+        print(f"  - {r}")
 
-    print(out["jd"].model_dump_json(indent=2))
-    print(out["profile"].model_dump_json(indent=2))
-    print(f"\n并发 {parallel_s:.1f}s   串行 {serial_s:.1f}s")
-
-    assert set(out) == {"jd", "profile"}, f"RunnableParallel 的 key 应与构造时一致，得到 {set(out)}"
-    assert isinstance(out["jd"], JDSpec) and isinstance(out["profile"], Profile)
-    assert out["profile"].years == 4, f"年限该是 4，解析成了 {out['profile'].years}"
+    assert isinstance(report, MatchReport)
+    assert 0 <= report.score <= 100
+    # 简历用的是 Django/Flask/MySQL，JD 要 FastAPI/PostgreSQL/Redis —— 不可能全满足
+    assert any(g.status != "满足" for g in report.gaps), "全标满足了，说明它在脑补"
