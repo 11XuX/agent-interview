@@ -1,0 +1,8 @@
+[project]
+name = "agent-interview"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain-openai>=1.6.0",
+    "python-dotenv>=1.2.3",
+]
