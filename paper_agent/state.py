@@ -41,6 +41,12 @@ class Relevance(BaseModel):
     reason: str = Field(description="一句话说明依据，指出摘要里的哪一点")
 
 
+class RetryQuery(BaseModel):
+    """给证据不足的子问题换一条检索式。"""
+
+    query: str = Field(description="换一个角度的检索式，英文，不要和已试过的雷同")
+
+
 class Paper(BaseModel):
     """跨源统一后的一篇文献。"""
 
@@ -60,9 +66,16 @@ class State(TypedDict, total=False):
 
     question: str
     plan: Plan
+
     # 不加 reducer：只有 search 一个节点写它，而 ranker 要的是覆盖不是追加。
     # reducer 是字段级的，加了就意味着任何节点写它都只能追加。
-    papers: list[Paper] #reducer函数
+    papers: list[Paper]
+
+    # 循环用的三个字段
+    pending: list[SubQuery]   # 这一轮 search 要查的检索式（工作队列）
+    tried: list[str]          # 已经试过的检索式，补检索时避开
+    round: int                # 第几轮
+    gaps: list[str]           # 证据不足的子问题（只有 check 写，不需要 reducer）
 
 
 def _key(p: Paper) -> str:

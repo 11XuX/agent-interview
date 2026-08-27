@@ -9,8 +9,25 @@ from .graph import graph
 QUESTION = "单细胞 RNA-seq 的批次效应校正方法哪类更可靠"
 
 if __name__ == "__main__":
+    async def run():
+        state = {}
+        async for chunk in graph.astream({"question": QUESTION}):
+            for node, patch in chunk.items():
+                bits = []
+                if "pending" in patch:
+                    bits.append(f"pending={len(patch['pending'])}")
+                if "papers" in patch:
+                    bits.append(f"papers={len(patch['papers'])}")
+                if "gaps" in patch:
+                    bits.append(f"gaps={len(patch['gaps'])}")
+                if "round" in patch:
+                    bits.append(f"round={patch['round']}")
+                print(f"  · {node:8} {' '.join(bits)}")
+                state |= patch
+        return state
+
     t = time.perf_counter()
-    out = asyncio.run(graph.ainvoke({"question": QUESTION}))
+    out = asyncio.run(run())
 
     for sq in out["plan"].sub_queries:
         print(f"\n■ {sq.question}")
