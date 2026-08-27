@@ -15,8 +15,9 @@ if __name__ == "__main__":
     for sq in out["plan"].sub_queries:
         print(f"\n■ {sq.question}")
         for p in out["papers"]:
-            if p.found_for == sq.question:
-                print(f"    [{p.source:9}] {p.year} {p.title[:56]}")
+            if sq.question in p.found_for:
+                hits = f"x{len(p.found_for)}" if len(p.found_for) > 1 else "  "
+                print(f"   {hits} [{p.source:9}] {p.year} {p.title[:52]}")
 
     print(f"\n共 {len(out['papers'])} 篇  "
           f"{dict(Counter(p.source for p in out['papers']))}  "

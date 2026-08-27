@@ -28,7 +28,7 @@ async def europepmc(client: httpx.AsyncClient, sq: SubQuery) -> list[Paper]:
             abstract=it.get("abstractText") or "",
             fulltext_url=(f"https://www.ebi.ac.uk/europepmc/webservices/rest/"
                           f"{pmcid}/fullTextXML" if pmcid else ""),
-            found_for=sq.question,
+            found_for=[sq.question],
         ))
     return out
 
@@ -55,7 +55,7 @@ async def arxiv(client: httpx.AsyncClient, sq: SubQuery) -> list[Paper]:
             year=int((e.findtext("a:published", "", ns) or "0")[:4] or 0),
             abstract=" ".join((e.findtext("a:summary", "", ns) or "").split()),
             fulltext_url=f"https://arxiv.org/abs/{aid}",
-            found_for=sq.question,
+            found_for=[sq.question],
         ))
     return out
 

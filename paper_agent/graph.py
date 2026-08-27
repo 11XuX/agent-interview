@@ -2,15 +2,17 @@
 
 from langgraph.graph import END, START, StateGraph
 
-from .nodes import planner, search
+from .nodes import planner, ranker, search
 from .state import State
 
 builder = StateGraph(State)
 builder.add_node("planner", planner)
 builder.add_node("search", search)
+builder.add_node("ranker", ranker)
 
 builder.add_edge(START, "planner")
 builder.add_edge("planner", "search")
-builder.add_edge("search", END)
+builder.add_edge("search", "ranker")
+builder.add_edge("ranker", END)
 
 graph = builder.compile()

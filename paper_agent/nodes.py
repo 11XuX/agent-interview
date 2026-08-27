@@ -9,7 +9,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 
 from .sources import SOURCES
-from .state import Plan, State
+from .state import Plan, Relevance, State, dedup
 
 load_dotenv()
 
@@ -44,3 +44,37 @@ async def search(state: State) -> State:
             for src in SOURCES
         ))
     return {"papers": [p for b in batches for p in b]}
+
+
+MIN_SCORE = 2        # 低于这个分的丢掉
+MAX_CONCURRENCY = 5  # 同时最多几个模型调用
+
+rank_chain = ChatPromptTemplate.from_messages([
+    ("system", "你是文献筛选员。判断这篇文献能不能回答给定的子问题。"
+               "只看标题和摘要提供的事实，不要脑补。宁可给低分也不要放过不相关的。"),
+    ("human", "子问题：\n{questions}\n\n标题：{title}\n\n摘要：{abstract}"),
+]) | llm.with_structured_output(Relevance, method="function_calling")
+
+
+async def ranker(state: State) -> State:
+    """去重 + 相关性筛选。
+
+    abatch 是 Runnable 基类白送的：一次传一批输入，内部并发跑，
+    结果按输入顺序返回。max_concurrency 限制同时在飞的数量。
+    """
+    papers = dedup(state["papers"])
+
+    scores: list[Relevance] = await rank_chain.abatch(
+        [{"questions": "\n".join(f"- {q}" for q in p.found_for),
+          "title": p.title,
+          "abstract": p.abstract[:1500] or "（无摘要）"} for p in papers],
+        config={"max_concurrency": MAX_CONCURRENCY},
+    )
+
+    kept = []
+    for p, r in zip(papers, scores):     # abatch 保序，可以直接 zip
+        p.score, p.reason = r.score, r.reason
+        if r.score >= MIN_SCORE:
+            kept.append(p)
+    kept.sort(key=lambda p: (-p.score, -len(p.found_for)))
+    return {"papers": kept}
