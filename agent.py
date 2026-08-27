@@ -1,6 +1,7 @@
 import os
 from typing import TypedDict
 
+import httpx
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
@@ -18,6 +19,8 @@ llm = ChatOpenAI(
     extra_body={"thinking": {"type": "disabled"}},
 )
 
+EUROPEPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+
 
 class Plan(BaseModel):
     """把研究问题拆成可检索的形式。"""
@@ -26,26 +29,49 @@ class Plan(BaseModel):
     sub_questions: list[str] = Field(description="必须回答的子问题，3-5 个，每个都能被文献证据支撑或否定")
 
 
+class Paper(BaseModel):
+    pmcid: str
+    title: str
+    year: int
+
+
 class State(TypedDict, total=False):
     question: str
     plan: Plan
+    papers: list[Paper]
 
 
 def make_plan(state: State) -> State:
-    """模型返回 Plan 对象，不是文本。"""
     p = llm.with_structured_output(Plan, method="function_calling").invoke(state["question"])
     return {"plan": p}
 
 
+def search(state: State) -> State:
+    """拿关键词去查 Europe PMC。节点第一次碰外部世界。"""
+    q = " OR ".join(f'"{k}"' for k in state["plan"].keywords)
+    r = httpx.get(
+        EUROPEPMC,
+        params={"query": f"({q}) AND OPEN_ACCESS:Y", "format": "json", "pageSize": 5},
+        timeout=20,
+    )
+    r.raise_for_status()
+    papers = [
+        Paper(pmcid=it.get("pmcid", ""), title=it["title"], year=int(it.get("pubYear") or 0))
+        for it in r.json()["resultList"]["result"]
+    ]
+    return {"papers": papers}
+
+
 builder = StateGraph(State)
 builder.add_node("make_plan", make_plan)
+builder.add_node("search", search)
 builder.add_edge(START, "make_plan")
-builder.add_edge("make_plan", END)
+builder.add_edge("make_plan", "search")
+builder.add_edge("search", END)
 graph = builder.compile()
 
 out = graph.invoke({"question": "单细胞 RNA-seq 的批次效应校正方法哪类更可靠"})
-p = out["plan"]
-print("类型:", type(p).__name__)
-print("keywords:", p.keywords)
-for q in p.sub_questions:
-    print("  -", q)
+print("关键词:", out["plan"].keywords)
+print(f"查到 {len(out['papers'])} 篇:")
+for p in out["papers"]:
+    print(f"  {p.year}  {p.pmcid:12} {p.title[:60]}")
