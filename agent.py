@@ -9,29 +9,20 @@ class State(TypedDict):
 
 
 def add_one(state: State) -> dict:
-    return {"count": state["count"] + 1, "log": ["add_one 跑了"]}
-
-
-def double(state: State) -> dict:
-    return {"count": state["count"] * 2, "log": ["double 跑了"]}
+    return {"count": state["count"] + 1, "log": [f"加到 {state['count'] + 1}"]}
 
 
 def route(state: State) -> str:
-    """条件边的判断函数：读状态，返回下一个节点的名字。
-
-    它不是节点 —— 不返回补丁，不改状态，只回答"接下来跑谁"。
-    """
-    return "double" if state["count"] % 2 == 0 else END
+    """够了就结束，不够就回 add_one 再来一轮。"""
+    return END if state["count"] >= 5 else "add_one"
 
 
 builder = StateGraph(State)
 builder.add_node("add_one", add_one)
-builder.add_node("double", double)
 builder.add_edge(START, "add_one")
-builder.add_conditional_edges("add_one", route)   # ← 替换掉原来写死的 add_edge
-builder.add_edge("double", END)
+builder.add_conditional_edges("add_one", route)   # ← 指回自己，成环
 graph = builder.compile()
 
-for start in (0, 1):
-    out = graph.invoke({"count": start, "log": []})
-    print(f"  起点 {start} -> count={out['count']:2d}  路径 {out['log']}")
+out = graph.invoke({"count": 0, "log": []})
+print("count:", out["count"])
+print("log:  ", out["log"])
