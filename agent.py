@@ -1,28 +1,36 @@
-from typing import Annotated, TypedDict
+import os
+from typing import TypedDict
 
+from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
+
+load_dotenv()
+
+llm = ChatOpenAI(
+    model=os.environ["MODEL"],
+    base_url=os.environ["OPENAI_BASE_URL"],
+    api_key=os.environ["OPENAI_API_KEY"],
+    temperature=0,
+)
 
 
 class State(TypedDict):
-    count: int
-    log: Annotated[list[str], list.__add__]
+    question: str
+    answer: str
 
 
-def add_one(state: State) -> dict:
-    return {"count": state["count"] + 1, "log": [f"加到 {state['count'] + 1}"]}
-
-
-def route(state: State) -> str:
-    """够了就结束，不够就回 add_one 再来一轮。"""
-    return END if state["count"] >= 5 else "add_one"
+def ask(state: State) -> dict:
+    """节点里干什么框架不管。这里调一次模型。"""
+    resp = llm.invoke(state["question"])       # 返回 AIMessage 对象
+    return {"answer": resp.content}            # .content 才是文本
 
 
 builder = StateGraph(State)
-builder.add_node("add_one", add_one)
-builder.add_edge(START, "add_one")
-builder.add_conditional_edges("add_one", route)   # ← 指回自己，成环
+builder.add_node("ask", ask)
+builder.add_edge(START, "ask")
+builder.add_edge("ask", END)
 graph = builder.compile()
 
-out = graph.invoke({"count": 0, "log": []})
-print("count:", out["count"])
-print("log:  ", out["log"])
+out = graph.invoke({"question": "用一句话说清楚什么是批次效应"})
+print(out["answer"])
