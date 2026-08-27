@@ -18,7 +18,15 @@ from dataclasses import dataclass, field
 
 from langchain_core.callbacks import BaseCallbackHandler
 
-QUESTION = "单细胞 RNA-seq 的批次效应校正方法哪类更可靠"
+# 三道题，难度递增：
+#   1 有大量现成 benchmark 文献，检索容易
+#   2 交叉领域，同义词多，检索式不好写
+#   3 偏工程细节，文献少，容易召回不足 —— 考的是"承认证据不足"的诚实度
+QUESTIONS = [
+    "单细胞 RNA-seq 的批次效应校正方法哪类更可靠",
+    "空间转录组数据做细胞类型反卷积时，参考数据集的选择对结果影响有多大",
+    "单细胞数据分析流程里，双细胞（doublet）检测工具在高细胞密度样本上的失效模式",
+]
 CITE_RE = re.compile(r"\[(PMC\d+)\s*·\s*([^\]]+?)\]")
 PMCID_RE = re.compile(r"PMC\d+")
 
@@ -41,6 +49,8 @@ class Meter(BaseCallbackHandler):
 @dataclass
 class Result:
     shape: str
+    question: str = ""
+    qid: int = 0
     seconds: float = 0.0
     llm_calls: int = 0
     in_tok: int = 0
@@ -59,7 +69,7 @@ class Result:
         return sorted({p for p, _ in self.cites if p not in self.seen_pmcids})
 
 
-async def _run_messages_shape(name, graph, limit: int) -> Result:
+async def _run_messages_shape(name, graph, question: str, limit: int) -> Result:
     """react / harness 两版都是 messages 形状，跑法一样。"""
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -67,7 +77,7 @@ async def _run_messages_shape(name, graph, limit: int) -> Result:
     t = time.perf_counter()
     final = ""
     async for chunk in graph.astream(
-        {"messages": [HumanMessage(QUESTION)]},
+        {"messages": [HumanMessage(question)]},
         {"recursion_limit": limit, "callbacks": [meter]},
     ):
         for _node, patch in (chunk or {}).items():
@@ -83,12 +93,12 @@ async def _run_messages_shape(name, graph, limit: int) -> Result:
     return r
 
 
-async def run_workflow() -> Result:
+async def run_workflow(question: str) -> Result:
     from paper_agent.graph import graph
 
     r, meter = Result("workflow"), Meter()
     t = time.perf_counter()
-    out = await graph.ainvoke({"question": QUESTION}, {"callbacks": [meter]})
+    out = await graph.ainvoke({"question": question}, {"callbacks": [meter]})
     r.seconds = time.perf_counter() - t
     r.llm_calls, r.in_tok, r.out_tok = meter.calls, meter.in_tok, meter.out_tok
     r.report = out.get("report", "")
@@ -98,38 +108,77 @@ async def run_workflow() -> Result:
     return r
 
 
-async def run_react() -> Result:
+async def run_react(question: str) -> Result:
     from .react import graph
-    return await _run_messages_shape("react", graph, 40)
+    return await _run_messages_shape("react", graph, question, 40)
 
 
-async def run_harness() -> Result:
+async def run_harness(question: str) -> Result:
     from .harness import graph
-    return await _run_messages_shape("harness", graph, 60)
+    return await _run_messages_shape("harness", graph, question, 60)
 
 
 def table(rows: list[Result]) -> str:
-    head = f"{'':10} {'秒':>6} {'模型调用':>8} {'输入tok':>9} {'输出tok':>9} {'工具次':>7} {'报告字':>7} {'引用':>5} {'伪引用':>6}"
-    lines = [head, "─" * len(head)]
+    head = (f"{'形状':8} {'题':>2} {'秒':>5} {'模型':>5} {'输入tok':>8} {'输出tok':>8} "
+            f"{'工具':>5} {'字数':>6} {'引用':>5} {'伪引用':>6}")
+    lines = [head, "─" * 72]
     for r in rows:
         lines.append(
-            f"{r.shape:10} {r.seconds:6.0f} {r.llm_calls:8d} {r.in_tok:9d} {r.out_tok:9d} "
-            f"{r.tool_calls:7d} {len(r.report):7d} {len(r.cites):5d} {len(r.fake_cites):6d}")
+            f"{r.shape:8} {r.qid:>2} {r.seconds:5.0f} {r.llm_calls:5d} {r.in_tok:8d} "
+            f"{r.out_tok:8d} {r.tool_calls:5d} {len(r.report):6d} {len(r.cites):5d} "
+            f"{len(r.fake_cites):6d}")
+    return "\n".join(lines)
+
+
+def summary(rows: list[Result]) -> str:
+    """按形状聚合，取均值。"""
+    from statistics import mean
+    by: dict[str, list[Result]] = {}
+    for r in rows:
+        by.setdefault(r.shape, []).append(r)
+    head = (f"{'形状':8} {'n':>2} {'秒':>5} {'模型':>5} {'输入tok':>8} {'输出tok':>8} "
+            f"{'工具':>5} {'字数':>6} {'引用':>5} {'伪引用':>6}")
+    lines = ["", "均值", head, "─" * 72]
+    for shape, rs in by.items():
+        m = lambda f: mean(f(r) for r in rs)   # noqa: E731
+        lines.append(
+            f"{shape:8} {len(rs):>2} {m(lambda r: r.seconds):5.0f} "
+            f"{m(lambda r: r.llm_calls):5.0f} {m(lambda r: r.in_tok):8.0f} "
+            f"{m(lambda r: r.out_tok):8.0f} {m(lambda r: r.tool_calls):5.0f} "
+            f"{m(lambda r: len(r.report)):6.0f} {m(lambda r: len(r.cites)):5.1f} "
+            f"{m(lambda r: len(r.fake_cites)):6.1f}")
     return "\n".join(lines)
 
 
 async def main():
-    rows = []
-    for label, fn in (("workflow", run_workflow), ("react", run_react), ("harness", run_harness)):
-        print(f"跑 {label} ...", flush=True)
-        try:
-            rows.append(await fn())
-        except Exception as e:                      # noqa: BLE001
-            print(f"  {label} 挂了: {type(e).__name__}: {str(e)[:120]}")
+    rows: list[Result] = []
+    runners = (("workflow", run_workflow), ("react", run_react), ("harness", run_harness))
+    for qid, q in enumerate(QUESTIONS, 1):
+        print(f"\n【题 {qid}】{q}")
+        for label, fn in runners:
+            print(f"  跑 {label} ...", end="", flush=True)
+            try:
+                r = await fn(q)
+                r.qid, r.question = qid, q
+                rows.append(r)
+                print(f" {r.seconds:.0f}s  引用 {len(r.cites)}  伪 {len(r.fake_cites)}")
+            except Exception as e:                  # noqa: BLE001
+                print(f" 挂了 {type(e).__name__}: {str(e)[:80]}")
+
     print("\n" + table(rows))
+    print(summary(rows))
     for r in rows:
         if r.fake_cites:
-            print(f"\n{r.shape} 的伪引用: {r.fake_cites}")
+            print(f"\n[题{r.qid}] {r.shape} 伪引用: {r.fake_cites}")
+
+    import json, pathlib
+    pathlib.Path("bench_result.json").write_text(json.dumps([
+        {"shape": r.shape, "qid": r.qid, "question": r.question, "seconds": round(r.seconds, 1),
+         "llm_calls": r.llm_calls, "in_tok": r.in_tok, "out_tok": r.out_tok,
+         "tool_calls": r.tool_calls, "chars": len(r.report), "cites": len(r.cites),
+         "fake_cites": r.fake_cites, "report": r.report}
+        for r in rows], ensure_ascii=False, indent=2), encoding="utf-8")
+    print("\n明细 -> bench_result.json")
     return rows
 
 
