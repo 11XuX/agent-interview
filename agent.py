@@ -1,4 +1,6 @@
+import asyncio
 import os
+import time
 from typing import TypedDict
 
 import httpx
@@ -61,20 +63,26 @@ def make_plan(state: State) -> State:
     return {"plan": plan_chain.invoke({"question": state["question"]})}
 
 
-def search(state: State) -> State:
-    """每条检索式查一次。目前是串行，下一步改并发。"""
-    papers = []
-    with httpx.Client(timeout=20) as client:
-        for sq in state["plan"].sub_queries:
-            r = client.get(EUROPEPMC, params={
-                "query": f"({sq.query}) AND OPEN_ACCESS:Y",
-                "format": "json", "pageSize": 3,
-            })
-            r.raise_for_status()
-            for it in r.json()["resultList"]["result"]:
-                papers.append(Paper(pmcid=it.get("pmcid", ""), title=it["title"],
-                                    year=int(it.get("pubYear") or 0), found_for=sq.question))
-    return {"papers": papers}
+async def _one_query(client: httpx.AsyncClient, sq: SubQuery) -> list[Paper]:
+    """查一条检索式。"""
+    r = await client.get(EUROPEPMC, params={
+        "query": f"({sq.query}) AND OPEN_ACCESS:Y",
+        "format": "json", "pageSize": 3,
+    })
+    r.raise_for_status()
+    return [Paper(pmcid=it.get("pmcid", ""), title=it["title"],
+                  year=int(it.get("pubYear") or 0), found_for=sq.question)
+            for it in r.json()["resultList"]["result"]]
+
+
+async def search(state: State) -> State:
+    """节点可以是 async def，框架自己识别。四条检索式同时发。"""
+    async with httpx.AsyncClient(timeout=20) as client:
+        # gather 把一堆协程同时跑起来，全部完成后按原顺序返回结果
+        batches = await asyncio.gather(
+            *(_one_query(client, sq) for sq in state["plan"].sub_queries)
+        )
+    return {"papers": [p for b in batches for p in b]}
 
 
 builder = StateGraph(State)
@@ -85,11 +93,13 @@ builder.add_edge("make_plan", "search")
 builder.add_edge("search", END)
 graph = builder.compile()
 
-out = graph.invoke({"question": "单细胞 RNA-seq 的批次效应校正方法哪类更可靠"})
+t = time.perf_counter()
+out = asyncio.run(graph.ainvoke({"question": "单细胞 RNA-seq 的批次效应校正方法哪类更可靠"}))
+elapsed = time.perf_counter() - t
 for sq in out["plan"].sub_queries:
     print(f"\n■ {sq.question}")
     print(f"  检索式: {sq.query}")
     for p in out["papers"]:
         if p.found_for == sq.question:
             print(f"    {p.year} {p.pmcid:12} {p.title[:58]}")
-print(f"\n共 {len(out['papers'])} 篇")
+print(f"\n共 {len(out['papers'])} 篇，全程 {elapsed:.2f}s")
