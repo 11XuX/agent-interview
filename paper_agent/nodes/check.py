@@ -5,7 +5,6 @@
 """
 
 from langchain_core.prompts import ChatPromptTemplate
-from langgraph.graph import END
 
 from ..llm import MAX_CONCURRENCY, llm
 from ..models import RetryQuery, SubQuery
@@ -45,5 +44,5 @@ async def check(state: State) -> State:
 
 
 def route_after_check(state: State) -> str:
-    """条件边：还有 pending 就回 search 再查一轮，否则结束。"""
-    return "search" if state.get("pending") else END
+    """条件边：还有 pending 就回 search 再查一轮，否则往下走读全文。"""
+    return "search" if state.get("pending") else "reader"

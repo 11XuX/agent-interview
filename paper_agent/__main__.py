@@ -22,6 +22,10 @@ if __name__ == "__main__":
                     bits.append(f"gaps={len(patch['gaps'])}")
                 if "round" in patch:
                     bits.append(f"round={patch['round']}")
+                if node == "reader":
+                    ok = sum(1 for x in patch["papers"] if x.sections)
+                    chars = sum(len(s.text) for x in patch["papers"] for s in x.sections)
+                    bits.append(f"全文 {ok}/{len(patch['papers'])} 篇 {chars} 字")
                 print(f"  · {node:8} {' '.join(bits)}")
                 state |= patch
         return state

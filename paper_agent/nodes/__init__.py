@@ -3,6 +3,7 @@
 from .check import check, route_after_check
 from .planner import planner
 from .ranker import ranker
+from .reader import reader
 from .search import search
 
-__all__ = ["planner", "search", "ranker", "check", "route_after_check"]
+__all__ = ["planner", "search", "ranker", "reader", "check", "route_after_check"]

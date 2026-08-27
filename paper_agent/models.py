@@ -41,6 +41,13 @@ class RetryQuery(BaseModel):
 
     query: str = Field(description="换一个角度的检索式，英文，不要和已试过的雷同")
 
+class Section(BaseModel):
+    """全文里的一节。抽证据时要标出证据来自哪一节。"""
+
+    title: str
+    text: str
+
+
 class Paper(BaseModel):
     """跨源统一后的一篇文献。"""
 
@@ -53,6 +60,8 @@ class Paper(BaseModel):
     found_for: list[str] = []   # 命中了哪些子问题；被越多子问题命中说明越核心
     score: int = 0              # Ranker 打的相关性分，0-3
     reason: str = ""            # 打这个分的理由
+    sections: list[Section] = []   # Reader 拉到的全文，已截断
+    read_error: str = ""           # 拉全文失败的原因，空=没失败或没拉过
 
 def _key(p: Paper) -> str:
     """去重键：标题规范化后精确匹配。
