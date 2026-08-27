@@ -41,6 +41,36 @@ class RetryQuery(BaseModel):
 
     query: str = Field(description="换一个角度的检索式，英文，不要和已试过的雷同")
 
+class Finding(BaseModel):
+    """从一篇论文的一节里抽出的一条证据。"""
+
+    sub_question: str = Field(description="这条证据回答的是哪个子问题，原样抄给定的子问题")
+    section: str = Field(description="这段话出自哪一节，原样抄给定的节标题")
+    quote: str = Field(description="原文片段，一到三句，必须逐字来自正文，不许改写")
+    claim: str = Field(description="这段原文说明了什么，一句中文")
+    supports: bool = Field(description="true=支持这个子问题的正面结论；false=反例或否定证据")
+
+
+class Findings(BaseModel):
+    """一篇论文的抽取结果。"""
+
+    findings: list[Finding] = Field(
+        description="抽不出就给空列表。宁可少抽也不要凑数，更不要写正文里没有的话"
+    )
+
+    @field_validator("findings", mode="before")
+    @classmethod
+    def _parse_if_string(cls, v):
+        return json.loads(v) if isinstance(v, str) else v
+
+
+class Evidence(Finding):
+    """Finding 加上出处。存进 state 的是这个。"""
+
+    paper_id: str
+    paper_title: str
+
+
 class Section(BaseModel):
     """全文里的一节。抽证据时要标出证据来自哪一节。"""
 

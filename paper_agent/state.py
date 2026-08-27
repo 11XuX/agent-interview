@@ -1,12 +1,12 @@
 """图的共享状态。
 
 字段标没标 Annotated[..., reducer] 决定并发写入时是覆盖还是归约。
-目前没有字段需要 reducer —— 每个字段都只有一个节点写。
+只有 evidence 需要 reducer —— Send 扇出的 N 个 extract 节点同时往它写。
 """
 
-from typing import TypedDict
+from typing import Annotated, TypedDict
 
-from .models import Paper, Plan, SubQuery
+from .models import Evidence, Paper, Plan, SubQuery
 
 
 class State(TypedDict, total=False):
@@ -24,3 +24,8 @@ class State(TypedDict, total=False):
     tried: list[str]          # 已经试过的检索式，补检索时避开
     round: int                # 第几轮
     gaps: list[str]           # 证据不足的子问题（只有 check 写，不需要 reducer）
+
+    # 唯一需要 reducer 的字段：extract 通过 Send 扇出成 N 个并发节点，
+    # N 个节点在同一个超步里都往 evidence 写。不标 reducer 会直接
+    # InvalidUpdateError: Can receive only one value per step.
+    evidence: Annotated[list[Evidence], list.__add__]
