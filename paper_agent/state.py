@@ -29,3 +29,5 @@ class State(TypedDict, total=False):
     # N 个节点在同一个超步里都往 evidence 写。不标 reducer 会直接
     # InvalidUpdateError: Can receive only one value per step.
     evidence: Annotated[list[Evidence], list.__add__]
+
+    report: str               # Synthesis 产出的综述
