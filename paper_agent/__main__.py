@@ -19,6 +19,9 @@ async def run(question: str) -> dict:
                     ("papers", "evidence", "pending", "gaps") if k in patch]
             if "report" in patch:
                 bits.append(f"report={len(patch['report'])}字")
+            if node == "review":
+                for i in patch["issues"]:
+                    print(f"      ! {i[:88]}")
             print(f"  · {node:9} {' '.join(bits)}")
             for k, v in patch.items():
                 state[k] = state.get(k, []) + v if k == "evidence" else v

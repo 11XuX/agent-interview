@@ -31,3 +31,5 @@ class State(TypedDict, total=False):
     evidence: Annotated[list[Evidence], list.__add__]
 
     report: str               # Synthesis 产出的综述
+    issues: list[str]         # Review 查出的问题，非空则回 synthesis 重写
+    review_round: int         # 已经重写过几轮

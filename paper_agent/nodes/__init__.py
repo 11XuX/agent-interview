@@ -5,7 +5,8 @@ from .extract import extract, fan_out
 from .planner import planner
 from .ranker import ranker
 from .reader import reader
+from .review import review, route_after_review
 from .search import search
 from .synthesis import synthesis
 
-__all__ = ["planner", "search", "ranker", "reader", "extract", "fan_out", "synthesis", "check", "route_after_check"]
+__all__ = ["planner", "search", "ranker", "reader", "extract", "fan_out", "synthesis", "review", "route_after_review", "check", "route_after_check"]
