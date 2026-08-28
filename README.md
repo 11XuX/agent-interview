@@ -46,22 +46,34 @@
 
 每条边都是代码写死的业务流程。模型只在节点内部干活，从不决定"下一步做什么"。
 
+```mermaid
+flowchart LR
+    START([START]) --> planner
+    planner[planner<br/>拆子问题+检索式] --> search
+    search[search<br/>多源并发检索] --> ranker
+    ranker[ranker<br/>去重+打分筛选] --> check{check<br/>证据够吗}
+    check -->|"不够 且 round&lt;2"| search
+    check -->|够了| reader[reader<br/>拉全文+切章节]
+
+    reader -.->|Send 扇出| e1[extract]
+    reader -.->|Send 扇出| e2[extract]
+    reader -.->|Send 扇出| e3[extract]
+    e1 --> synthesis
+    e2 --> synthesis
+    e3 --> synthesis
+
+    synthesis[synthesis<br/>按子问题分头生成] --> review{review<br/>引用真吗<br/>论断越界吗}
+    review -->|有问题| synthesis
+    review -->|通过| END([END])
+
+    classDef loop stroke:#d97706,stroke-width:2px
+    classDef fan stroke:#7c3aed,stroke-width:2px
+    class check,review loop
+    class reader,e1,e2,e3 fan
 ```
-                     ┌─────────── 回边一：证据不足，补检索 ───────────┐
-                     ↓                                                │
-START ─> planner ─> search ─> ranker ─> check ──?──> reader           │
-                     ↑                    └───────────────────────────┘
-                     │                                  │
-                     │                            Send 扇出（每篇一个实例）
-                     │                          ┌───────┼───────┐
-                     │                       extract extract extract
-                     │                          └───────┼───────┘
-                     │                                  ↓
-                     │                             synthesis ⇄ review
-                     │                                  ↑      │
-                     └──────────────────────────────────┴──────┘
-                                              回边二：审出问题，重写
-```
+
+两条橙色回边是 LCEL 写不出的形状：跑几轮由运行时状态决定。紫色虚线是 Send 扇出，
+实例数等于筛后论文数，运行时才知道。
 
 节点与 AgentGuide 蓝图的对应关系：
 
@@ -88,8 +100,21 @@ builder.add_conditional_edges("call_model", tools_condition)   # 模型决定
 builder.add_edge("tools", "call_model")                        # 工具跑完回模型
 ```
 
+```mermaid
+flowchart LR
+    START([START]) --> m[call_model]
+    m -->|"最后一条消息有 tool_calls"| t[tools]
+    t -->|工具跑完回模型| m
+    m -->|没有 tool_calls| END([END])
+    classDef loop stroke:#d97706,stroke-width:2px
+    class m loop
+```
+
 流程是模型自己走出来的：并发查两条检索式 → 觉得不够再来两条 → 决定读某篇的 Results
 → 又读 Discussion → 中途想起还要查过校正 → 材料够了收工。
+
+终止权完全在模型手上 —— 它不再点名工具，循环就停。`recursion_limit` 只是安全网，
+撞上时抛异常且**已完成的工作全部丢失**。
 
 ### 形态三：harness
 
