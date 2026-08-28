@@ -13,7 +13,7 @@
 
 from deepagents import create_deep_agent
 
-from paper_agent.llm import llm
+from .workflow.llm import llm
 
 from .tools import TOOLS, read_section
 

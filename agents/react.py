@@ -7,7 +7,7 @@
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
-from paper_agent.llm import llm
+from .workflow.llm import llm
 
 from .tools import TOOLS
 

@@ -1,4 +1,4 @@
-"""python -m paper_agent"""
+"""python -m agents.workflow"""
 
 import asyncio
 import pathlib

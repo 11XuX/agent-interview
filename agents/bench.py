@@ -94,7 +94,7 @@ async def _run_messages_shape(name, graph, question: str, limit: int) -> Result:
 
 
 async def run_workflow(question: str) -> Result:
-    from paper_agent.graph import graph
+    from .workflow.graph import graph
 
     r, meter = Result("workflow"), Meter()
     t = time.perf_counter()
